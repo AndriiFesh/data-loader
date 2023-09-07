@@ -1,4 +1,3 @@
-import requests as rq
 import aiohttp
 import asyncio
 from lxml import html
@@ -7,6 +6,8 @@ import json
 import os
 from tqdm import tqdm
 import hashlib
+
+CONCURRENCY_LIMIT = 10
 
 data = {
     'Acts': 'https://sso.agc.gov.sg/Browse/Act/Current/All?SortBy=Title&SortOrder=ASC',
@@ -60,7 +61,7 @@ async def get_info_from_page(item: dict, driver: uc.Chrome, session: aiohttp.Cli
     driver (uc.Chrome): Webdriver to render the page before scrapping
     '''
     driver.get(f'{item["url"]}?WholeDoc=1')
-    await asyncio.sleep(20)
+    await asyncio.sleep(10)
     tree = html.fromstring(driver.page_source)
     main = tree.xpath('//div[@id="legisContent"]')
 
@@ -149,11 +150,10 @@ async def get_urls_from_single_page(driver: uc.Chrome, session: aiohttp.ClientSe
 
 async def main():
     async with aiohttp.ClientSession() as session:
-        # Initiate driver
         driver = await create_driver()
 
         for key, val in data.items():
-            print(f'Now scrapping {key}\nStarting url:{val}')
+            print(f'Now scraping {key}\nStarting url:{val}')
 
             directory_name = val.split("/")[-1]
 
@@ -168,25 +168,28 @@ async def main():
                 await asyncio.sleep(10)
                 final.extend(await get_urls_from_single_page(driver=driver, session=session))
 
-            for j in tqdm(range(len(final))):
-                url = final[j]["url"].replace("https://", "").replace("/", " ")
-                if os.path.exists(f"{directory_name}/{url}.json"):
-                    print(f"Skipped!")
-                    continue
+            async with asyncio.Semaphore(CONCURRENCY_LIMIT):
+                tasks = [get_info_from_page(item, driver=driver, session=session) for item in final]
 
-                final[j], driver = await get_info_from_page(final[j], driver=driver, session=session)
-                final[j]["Name of data"] = final[j]["title"]
-                data_json = json.dumps(final[j])
-                md5_hash = calculate_md5_hash(data_json)
-                final[j]["md5 hash"] = md5_hash
+                for item, _ in tqdm(await asyncio.gather(*tasks)):
+                    url = item["url"].replace("https://", "").replace("/", " ")
+                    file_path = f"{directory_name}/{url}.json"
 
-                with open(f"{directory_name}/{url}.json", "w") as f:
-                    json.dump(final[j], f)
+                    if os.path.exists(file_path):
+                        print(f"Skipped {file_path}!")
+                        continue
 
-            with open(f'{directory_name}.json', 'w') as f:
-                json.dump(final, f)
-            print(f'Data for {key} was collected, saved in {directory_name}.json\n')
+                    item["Name of data"] = item["title"]
+                    data_json = json.dumps(item)
+                    md5_hash = calculate_md5_hash(data_json)
+                    item["md5 hash"] = md5_hash
 
+                    with open(file_path, "w") as f:
+                        json.dump(item, f)
+
+                with open(f'{directory_name}.json', 'w') as f:
+                    json.dump(final, f)
+                print(f'Data for {key} was collected, saved in {directory_name}.json\n')
 
 if __name__ == '__main__':
     asyncio.run(main())
