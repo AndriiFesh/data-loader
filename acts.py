@@ -181,7 +181,7 @@ async def main():
             driver.get(val)
 
             final = []
-            for i in range(2):  # for i in range(await get_number_of_pages(driver=driver, session=session)):
+            for i in range(await get_number_of_pages(driver=driver, session=session)):
                 driver.get(val.replace('/All', f'/All/{i}?'))
                 await asyncio.sleep(10)
                 final.extend(await get_urls_from_single_page(driver=driver, session=session))
@@ -190,7 +190,7 @@ async def main():
             #          {"url": "https://sso.agc.gov.sg/Act/AA2004", "title": "Accountants Act 2004"},
             #          {'url': 'https://sso.agc.gov.sg/Act/IRDA2018',
             #           'title': 'Accountancy Functions (Consolidation) Act 2022'}]
-            for j in tqdm(range(2)):  # for j in tqdm(range(len(final))):
+            for j in tqdm(range(len(final))):
                 url = final[j]["url"].replace("https://", "").replace("/", " ")
                 if os.path.exists(f"{key}/{url}.json"):
                     print(f"Skipped!")
