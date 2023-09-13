@@ -1,3 +1,6 @@
+# import requests as rq
+import glob
+
 import aiohttp
 import asyncio
 from lxml import html
@@ -7,23 +10,20 @@ import os
 from tqdm import tqdm
 import hashlib
 
-CONCURRENCY_LIMIT = 10
-
 data = {
     'Acts': 'https://sso.agc.gov.sg/Browse/Act/Current/All?SortBy=Title&SortOrder=ASC',
-    # 'Subsidiary Legislation': 'https://sso.agc.gov.sg/Browse/SL/Current/All?PageSize=20',
-    # 'Acts Supplement': 'https://sso.agc.gov.sg/Browse/Acts-Supp/Published/All?PageSize=20',
-    # 'Bills Supplement': 'https://sso.agc.gov.sg/Browse/Bills-Supp/Published/All?PageSize=20',
-    # 'Subsidiary Legislation Supplement': 'https://sso.agc.gov.sg/Browse/SL-Supp/Published/All?PageSize=20',
-    # 'Revised Editions of Acts': 'https://sso.agc.gov.sg/Browse/Act-Rev/Published/All?PageSize=20',
-    # 'Revised Editions of Subsidiary Legislation': 'https://sso.agc.gov.sg/Browse/SL-Rev/Published/All?PageSize=20',
+    'Subsidiary Legislation': 'https://sso.agc.gov.sg/Browse/SL/Current/All?PageSize=20',
+    'Acts Supplement': 'https://sso.agc.gov.sg/Browse/Acts-Supp/Published/All?PageSize=20',
+    'Bills Supplement': 'https://sso.agc.gov.sg/Browse/Bills-Supp/Published/All?PageSize=20',
+    'Subsidiary Legislation Supplement': 'https://sso.agc.gov.sg/Browse/SL-Supp/Published/All?PageSize=20',
+    'Revised Editions of Acts': 'https://sso.agc.gov.sg/Browse/Act-Rev/Published/All?PageSize=20',
+    'Revised Editions of Subsidiary Legislation': 'https://sso.agc.gov.sg/Browse/SL-Rev/Published/All?PageSize=20',
 
 }
 
 
 async def create_driver() -> uc.Chrome:
     '''Function to create webdriver for rendering webpages
-
     Returns:
     driver (uc.Chrome): Webdriver to render the page before scrapping
     '''
@@ -44,10 +44,10 @@ async def create_driver() -> uc.Chrome:
     return uc.Chrome(options=options, version_main=115)
 
 
-def calculate_md5_hash(data):
-    md5_hash = hashlib.md5()
-    md5_hash.update(data.encode())
-    return md5_hash.hexdigest()
+# def calculate_md5_hash(data):
+#     md5_hash = hashlib.md5()
+#     md5_hash.update(data.encode())
+#     return md5_hash.hexdigest()
 
 
 async def get_info_from_page(item: dict, driver: uc.Chrome, session: aiohttp.ClientSession):
@@ -55,13 +55,12 @@ async def get_info_from_page(item: dict, driver: uc.Chrome, session: aiohttp.Cli
     Parameters:
     item (dict): Dictionary containing the title and the url
     driver (uc.Chrome): Webdriver to render the page before scrapping
-
     Returns:
     item (dict): Modified dictionary with the data from page
     driver (uc.Chrome): Webdriver to render the page before scrapping
     '''
     driver.get(f'{item["url"]}?WholeDoc=1')
-    await asyncio.sleep(10)
+    await asyncio.sleep(30)
     tree = html.fromstring(driver.page_source)
     main = tree.xpath('//div[@id="legisContent"]')
 
@@ -148,14 +147,33 @@ async def get_urls_from_single_page(driver: uc.Chrome, session: aiohttp.ClientSe
     return inter_data
 
 
+def combined(path, name):
+    file_paths = glob.glob(f"{path}/*.json")
+    all_json_data = []
+
+    for file_path in file_paths:
+        with open(file_path, "r") as file:
+            json_data = json.load(file)
+            all_json_data.append(json_data)
+
+    combined_directory = "data/combined"
+    if not os.path.exists(combined_directory):
+        os.makedirs(combined_directory)
+
+    output_file = f"{combined_directory}/combined{name}.json"
+    with open(output_file, "w") as outfile:
+        json.dump(all_json_data, outfile, indent=2)
+
+
 async def main():
     async with aiohttp.ClientSession() as session:
+        # Initiate driver
         driver = await create_driver()
 
         for key, val in data.items():
-            print(f'Now scraping {key}\nStarting url:{val}')
+            print(f'Now scrapping {key}\nStarting url:{val}')
 
-            directory_name = val.split("/")[-1]
+            directory_name = "data/" + key  # directory_name = val.split("/")[-1]
 
             if not os.path.exists(directory_name):
                 os.makedirs(directory_name)
@@ -163,33 +181,37 @@ async def main():
             driver.get(val)
 
             final = []
-            for i in range(await get_number_of_pages(driver=driver, session=session)):
+            for i in range(2):  # for i in range(await get_number_of_pages(driver=driver, session=session)):
                 driver.get(val.replace('/All', f'/All/{i}?'))
                 await asyncio.sleep(10)
                 final.extend(await get_urls_from_single_page(driver=driver, session=session))
+            # final = [{"url": "https://sso.agc.gov.sg/Act/AFCA2022",
+            #           "title": "Accountancy Functions (Consolidation) Act 2022"},
+            #          {"url": "https://sso.agc.gov.sg/Act/AA2004", "title": "Accountants Act 2004"},
+            #          {'url': 'https://sso.agc.gov.sg/Act/IRDA2018',
+            #           'title': 'Accountancy Functions (Consolidation) Act 2022'}]
+            for j in tqdm(range(2)):  # for j in tqdm(range(len(final))):
+                url = final[j]["url"].replace("https://", "").replace("/", " ")
+                if os.path.exists(f"{key}/{url}.json"):
+                    print(f"Skipped!")
+                    continue
 
-            async with asyncio.Semaphore(CONCURRENCY_LIMIT):
-                tasks = [get_info_from_page(item, driver=driver, session=session) for item in final]
+                final[j], driver = await get_info_from_page(final[j], driver=driver, session=session)
+                # final[j]["Name of data"] = final[j]["title"]
+                # data_json = json.dumps(final[j])
+                # md5_hash = calculate_md5_hash(data_json)
+                # final[j]["md5 hash"] = md5_hash
 
-                for item, _ in tqdm(await asyncio.gather(*tasks)):
-                    url = item["url"].replace("https://", "").replace("/", " ")
-                    file_path = f"{directory_name}/{url}.json"
+                with open(f"{directory_name}/{url}.json", "w") as f:
+                    json.dump(final[j], f)
 
-                    if os.path.exists(file_path):
-                        print(f"Skipped {file_path}!")
-                        continue
+            with open(f'data/{key}.json', 'w') as f:
+                json.dump(final, f)
 
-                    item["Name of data"] = item["title"]
-                    data_json = json.dumps(item)
-                    md5_hash = calculate_md5_hash(data_json)
-                    item["md5 hash"] = md5_hash
+            print(f'Data for {key} was collected, saved in {directory_name}.json\n')
 
-                    with open(file_path, "w") as f:
-                        json.dump(item, f)
+            combined(directory_name, key)
 
-                with open(f'{directory_name}.json', 'w') as f:
-                    json.dump(final, f)
-                print(f'Data for {key} was collected, saved in {directory_name}.json\n')
 
 if __name__ == '__main__':
     asyncio.run(main())
