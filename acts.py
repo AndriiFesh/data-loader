@@ -18,7 +18,6 @@ data = {
     'Subsidiary Legislation Supplement': 'https://sso.agc.gov.sg/Browse/SL-Supp/Published/All?PageSize=20',
     'Revised Editions of Acts': 'https://sso.agc.gov.sg/Browse/Act-Rev/Published/All?PageSize=20',
     'Revised Editions of Subsidiary Legislation': 'https://sso.agc.gov.sg/Browse/SL-Rev/Published/All?PageSize=20',
-
 }
 
 
@@ -42,12 +41,6 @@ async def create_driver() -> uc.Chrome:
     # options.add_argument("--headless=new") #can enable or disable headless, up to your needs
 
     return uc.Chrome(options=options, version_main=115)
-
-
-# def calculate_md5_hash(data):
-#     md5_hash = hashlib.md5()
-#     md5_hash.update(data.encode())
-#     return md5_hash.hexdigest()
 
 
 async def get_info_from_page(item: dict, driver: uc.Chrome, session: aiohttp.ClientSession):
@@ -165,55 +158,53 @@ def combined(path, name):
         json.dump(all_json_data, outfile, indent=2)
 
 
-async def main():
+async def scrape_and_save_data(key, val):
     async with aiohttp.ClientSession() as session:
-        # Initiate driver
         driver = await create_driver()
 
-        for key, val in data.items():
-            print(f'Now scrapping {key}\nStarting url:{val}')
+        print(f'Now scrapping {key}\nStarting url:{val}')
 
-            directory_name = "data/" + key  # directory_name = val.split("/")[-1]
+        directory_name = "data/" + key
 
-            if not os.path.exists(directory_name):
-                os.makedirs(directory_name)
+        if not os.path.exists(directory_name):
+            os.makedirs(directory_name)
 
-            driver.get(val)
+        driver.get(val)
 
-            final = []
-            for i in range(await get_number_of_pages(driver=driver, session=session)):
-                driver.get(val.replace('/All', f'/All/{i}?'))
-                await asyncio.sleep(10)
-                final.extend(await get_urls_from_single_page(driver=driver, session=session))
-            # final = [{"url": "https://sso.agc.gov.sg/Act/AFCA2022",
-            #           "title": "Accountancy Functions (Consolidation) Act 2022"},
-            #          {"url": "https://sso.agc.gov.sg/Act/AA2004", "title": "Accountants Act 2004"},
-            #          {'url': 'https://sso.agc.gov.sg/Act/IRDA2018',
-            #           'title': 'Accountancy Functions (Consolidation) Act 2022'}]
-            for j in tqdm(range(len(final))):
-                url = final[j]["url"].replace("https://", "").replace("/", " ")
-                if os.path.exists(f"{key}/{url}.json"):
-                    print(f"Skipped!")
-                    continue
+        final = []
+        for i in range(await get_number_of_pages(driver=driver, session=session)):
+            driver.get(val.replace('/All', f'/All/{i}?'))
+            await asyncio.sleep(10)
+            final.extend(await get_urls_from_single_page(driver=driver, session=session))
 
-                final[j], driver = await get_info_from_page(final[j], driver=driver, session=session)
-                # final[j]["Name of data"] = final[j]["title"]
-                # data_json = json.dumps(final[j])
-                # md5_hash = calculate_md5_hash(data_json)
-                # final[j]["md5 hash"] = md5_hash
+        for j in tqdm(range(len(final))):
+            url = final[j]["url"].replace("https://", "").replace("/", " ")
+            if os.path.exists(f"{key}/{url}.json"):
+                print(f"Skipped!")
+                continue
 
-                with open(f"{directory_name}/{url}.json", "w") as f:
-                    json.dump(final[j], f)
+            final[j], driver = await get_info_from_page(final[j], driver=driver, session=session)
 
-            with open(f'data/{key}.json', 'w') as f:
-                json.dump(final, f)
+            with open(f"{directory_name}/{url}.json", "w") as f:
+                json.dump(final[j], f)
 
-            print(f'Data for {key} was collected, saved in {directory_name}.json\n')
+        with open(f'data/{key}.json', 'w') as f:
+            json.dump(final, f)
 
-            combined(directory_name, key)
+        print(f'Data for {key} was collected, saved in {directory_name}.json\n')
+
+        combined(directory_name, key)
+
+
+async def main():
+    tasks = []
+    for key, val in data.items():
+        task = scrape_and_save_data(key, val)
+        tasks.append(task)
+
+    await asyncio.gather(*tasks)
 
 
 if __name__ == '__main__':
     asyncio.run(main())
-
 # https://sso.agc.gov.sg/Act/IRDA2018?WholeDoc=1#xy-
